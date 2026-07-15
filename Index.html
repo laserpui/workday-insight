@@ -1,28 +1,18 @@
 <!doctype html>
 <html lang="th">
 <head>
-  <base target="_top"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <script src="https://unpkg.com/lucide@latest"></script>
-  <?!= include('Styles'); ?>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#5b5ce2">
+  <title>Workday Insight</title>
+  <style>
+    *{box-sizing:border-box}html,body{height:100%;margin:0;font-family:system-ui,-apple-system,"Noto Sans Thai",sans-serif;background:linear-gradient(125deg,#e5ffff,#ffffe6 48%,#ffe6ff);color:#17233d}.shell{height:100%;display:flex;flex-direction:column}.top{height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 18px;background:rgba(255,255,255,.72);backdrop-filter:blur(16px);border-bottom:1px solid rgba(255,255,255,.8);font-size:14px}.brand{font-weight:800;display:flex;align-items:center;gap:9px}.mark{width:28px;height:28px;border-radius:9px;color:white;background:linear-gradient(135deg,#6366e9,#aa65df);display:grid;place-items:center}.open{background:#5b5ce2;color:white;border-radius:9px;padding:7px 11px;text-decoration:none;font-weight:700;font-size:12px}.frame{border:0;flex:1;width:100%;background:transparent}@media(max-width:520px){.top{padding:0 12px}.top small{display:none}}
+  </style>
 </head>
 <body>
-  <div class="ambient a"></div><div class="ambient b"></div>
-  <main class="app-shell">
-    <aside class="sidebar glass"><div class="brand"><span class="brand-icon">W</span><span>Workday<br><b>Insight</b></span></div>
-      <nav><button class="nav active" data-view="dashboard"><i data-lucide="layout-dashboard"></i>ภาพรวม</button><button class="nav" data-view="employees"><i data-lucide="users"></i>พนักงาน</button><button class="nav" data-view="records"><i data-lucide="clipboard-plus"></i>บันทึกข้อมูล</button><button class="nav" data-view="ai"><i data-lucide="sparkles"></i>AI Insight</button></nav>
-      <div class="sidebar-foot"><i data-lucide="shield-check"></i> ข้อมูลปลอดภัยบน Google Sheet</div></aside>
-    <section class="content"><header><div><p class="eyebrow">ATTENDANCE ANALYTICS</p><h1 id="pageTitle">ภาพรวมการทำงาน</h1></div><div class="header-actions"><select id="yearSelect"></select><button class="btn outline" onclick="exportCsv()"><i data-lucide="download"></i> Export</button><button class="btn primary" onclick="openModal('recordModal')"><i data-lucide="plus"></i> เพิ่มข้อมูล</button></div></header>
-      <div id="dashboard" class="view active"></div>
-      <div id="employees" class="view"></div>
-      <div id="records" class="view"></div>
-      <div id="ai" class="view"></div>
-    </section>
-  </main>
-  <div id="recordModal" class="modal"><div class="modal-card glass"><button class="close" onclick="closeModal('recordModal')">×</button><h2>บันทึกข้อมูล</h2><div class="tab-row"><button class="tab active" data-form="employeeForm">พนักงาน</button><button class="tab" data-form="attendanceForm">เข้างานสาย</button><button class="tab" data-form="leaveForm">วันลา</button></div>
-    <form id="employeeForm" class="form active" onsubmit="saveEmployee(event)"><label>ชื่อ-นามสกุล<input required name="name" placeholder="เช่น อัญชลี ใจดี"></label><label>วันที่เริ่มงาน<input required type="date" name="startDate"></label><button class="btn primary" type="submit">บันทึกพนักงาน</button></form>
-    <form id="attendanceForm" class="form" onsubmit="saveAttendance(event)"><label>พนักงาน<select required name="employeeId" class="employee-select"></select></label><label>วันที่<input required type="date" name="date"></label><label>สาย (นาที)<input required min="0" type="number" name="lateMinutes"></label><button class="btn primary" type="submit">บันทึกเวลา</button></form>
-    <form id="leaveForm" class="form" onsubmit="saveLeave(event)"><label>พนักงาน<select required name="employeeId" class="employee-select"></select></label><label>วันที่<input required type="date" name="date"></label><label>ประเภท<select name="type"><option value="sick">ลาป่วย</option><option value="personal">ลากิจ</option><option value="vacation">ลาพักร้อน</option><option value="other">ลาอื่นๆ</option></select></label><label>จำนวนวัน<input required min="0.5" step="0.5" type="number" name="days"></label><label>รายละเอียด<input name="note" placeholder="ระบุเมื่อเลือกลาอื่นๆ"></label><button class="btn primary" type="submit">บันทึกวันลา</button></form></div></div>
-  <div id="toast" class="toast"></div><?!= include('Scripts'); ?>
-</body></html>
+  <div class="shell">
+    <header class="top"><div class="brand"><span class="mark">W</span>Workday Insight <small>· ระบบบันทึกเวลาทำงาน</small></div><a class="open" href="https://script.google.com/macros/s/AKfycbxmLneewT2VEfuVC_9vR9YTwvI3bvHAkn7W084t4XY5g-AG1TobtAWyJNED9GmBlquslw/exec" target="_blank" rel="noopener">เปิดเต็มหน้าจอ ↗</a></header>
+    <iframe class="frame" title="Workday Insight Dashboard" src="https://script.google.com/macros/s/AKfycbxmLneewT2VEfuVC_9vR9YTwvI3bvHAkn7W084t4XY5g-AG1TobtAWyJNED9GmBlquslw/exec" allow="clipboard-write"></iframe>
+  </div>
+</body>
+</html>
