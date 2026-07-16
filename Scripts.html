@@ -1,0 +1,482 @@
+<script>
+let data = { employeeOptions: [], employees: [], records: [], summary: {}, filters: {}, aiConfigured: false };
+let aiInsight = null;
+let activeView = 'dashboard';
+const byId = id => document.getElementById(id);
+
+document.addEventListener('DOMContentLoaded', () => {
+  const now = new Date();
+  byId('startDateFilter').value = localDate(new Date(now.getFullYear(), now.getMonth(), 1));
+  byId('endDateFilter').value = localDate(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+  document.querySelectorAll('input[type="date"]').forEach(input => {
+    if (!input.value && input.name === 'date') input.value = localDate(now);
+  });
+  document.querySelectorAll('input[type="month"]').forEach(input => {
+    if (!input.value) input.value = localMonth(now);
+  });
+  document.querySelectorAll('.nav').forEach(button => {
+    button.addEventListener('click', () => showView(button.dataset.view, button));
+  });
+  document.querySelectorAll('.tab').forEach(button => {
+    button.addEventListener('click', () => switchForm(button));
+  });
+  document.querySelectorAll('.modal').forEach(modal => {
+    modal.addEventListener('click', event => {
+      if (event.target === modal) closeModal(modal.id);
+    });
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') document.querySelectorAll('.modal.open').forEach(modal => closeModal(modal.id));
+  });
+  icons();
+  load();
+});
+
+function load() {
+  const filters = getFilters();
+  if (filters.startDate > filters.endDate) {
+    toast('วันเริ่มต้นต้องไม่เกินวันสิ้นสุด');
+    return;
+  }
+  setLoading(true);
+  if (!hasServer()) {
+    setData(sample(filters));
+    setLoading(false);
+    toast('กำลังแสดงข้อมูลตัวอย่างในโหมดพรีวิว');
+    return;
+  }
+  google.script.run
+    .withSuccessHandler(result => {
+      setData(result);
+      setLoading(false);
+    })
+    .withFailureHandler(error => {
+      setLoading(false);
+      toast(errorMessage(error));
+    })
+    .getDashboardData(filters);
+}
+
+function setData(result) {
+  data = result || data;
+  aiInsight = null;
+  syncFilters();
+  render();
+}
+
+function getFilters() {
+  return {
+    startDate: byId('startDateFilter').value,
+    endDate: byId('endDateFilter').value,
+    employeeId: byId('employeeFilter').value
+  };
+}
+
+function syncFilters() {
+  if (data.filters) {
+    byId('startDateFilter').value = data.filters.startDate || byId('startDateFilter').value;
+    byId('endDateFilter').value = data.filters.endDate || byId('endDateFilter').value;
+  }
+  const selected = data.filters && data.filters.employeeId || '';
+  byId('employeeFilter').innerHTML = '<option value="">พนักงานทุกคน</option>' +
+    (data.employeeOptions || []).map(emp => '<option value="' + attr(emp.id) + '">' + esc(emp.name) + '</option>').join('');
+  byId('employeeFilter').value = selected;
+}
+
+function render() {
+  renderDashboard();
+  renderEmployees();
+  renderRecords();
+  renderAI();
+  fillEmployees();
+  icons();
+}
+
+function metric(icon, label, value, sub) {
+  return '<article class="metric glass"><div class="metric-top"><span>' + label + '</span><span class="metric-icon"><i data-lucide="' + icon + '"></i></span></div><strong>' + value + '</strong><small>' + sub + '</small></article>';
+}
+
+function renderDashboard() {
+  const summary = data.summary || {};
+  const employees = data.employees || [];
+  const metrics = [
+    metric('users', 'พนักงานในมุมมอง', summary.total || 0, 'ตามตัวกรองที่เลือก'),
+    metric('clock-3', 'เวลาสายสะสม', (summary.lateMinutes || 0) + ' นาที', periodText()),
+    metric('calendar-days', 'วันลาที่ใช้', (summary.leaveDays || 0) + ' วัน', 'รวมทุกประเภทการลา'),
+    metric('triangle-alert', 'ควรติดตาม', summary.atRisk || 0, 'เวลาสายตั้งแต่ 60 นาที')
+  ].join('');
+
+  const bars = employees.length
+    ? '<div class="bar-list">' + employees.map(emp =>
+        '<div class="bar-row"><b title="' + attr(emp.name) + '">' + esc(emp.name) + '</b><div class="bar"><span style="width:' + Math.min(100, emp.lateMinutes / 120 * 100) + '%"></span></div><b>' + emp.lateMinutes + '</b></div>'
+      ).join('') + '</div>'
+    : '<p class="empty">ไม่พบข้อมูลในช่วงเวลาที่เลือก</p>';
+
+  const leaveTypes = [
+    ['sick', 'ลาป่วย', 'สิทธิ์พื้นฐาน 30 วัน'],
+    ['personal', 'ลากิจ', 'สิทธิ์พื้นฐาน 5 วัน'],
+    ['vacation', 'พักร้อน', 'ตามอายุงาน']
+  ];
+  const leaveSummary = leaveTypes.map(item => {
+    const total = employees.reduce((sum, emp) => sum + Number(emp.remaining[item[0]] || 0), 0);
+    return '<div class="leave-item"><span>' + item[1] + '<small>' + item[2] + '</small></span><b>' + total + ' วัน</b></div>';
+  }).join('');
+
+  byId('dashboard').innerHTML =
+    '<div class="metrics">' + metrics + '</div>' +
+    '<div class="grid">' +
+      '<section class="panel glass"><div class="panel-head"><h2>เวลาสายรายบุคคล</h2><span class="tag">นาที / ช่วงเวลา</span></div>' + bars + '</section>' +
+      '<section class="panel glass"><div class="panel-head"><h2>สิทธิ์ลาคงเหลือ</h2></div><div class="leave-summary">' + leaveSummary + '</div></section>' +
+    '</div>';
+}
+
+function renderEmployees() {
+  const employees = data.employees || [];
+  const rows = employees.map(emp =>
+    '<tr>' +
+      '<td class="person">' + esc(emp.name) + '</td>' +
+      '<td>' + formatDate(emp.startDate) + '</td>' +
+      '<td><span class="pill">' + emp.lateMinutes + ' นาที</span></td>' +
+      '<td>' + numberText(emp.remaining.sick) + ' วัน</td>' +
+      '<td>' + numberText(emp.remaining.personal) + ' วัน</td>' +
+      '<td>' + numberText(emp.remaining.vacation) + ' / ' + numberText(emp.vacationEntitlement) + ' วัน</td>' +
+      '<td><div class="actions">' +
+        '<button class="icon-btn" type="button" title="แก้ไข" aria-label="แก้ไข ' + attr(emp.name) + '" onclick="editEmployee(\'' + js(emp.id) + '\')"><i data-lucide="pencil"></i></button>' +
+        '<button class="icon-btn delete" type="button" title="ลบ" aria-label="ลบ ' + attr(emp.name) + '" onclick="removeEmployee(\'' + js(emp.id) + '\')"><i data-lucide="trash-2"></i></button>' +
+      '</div></td>' +
+    '</tr>'
+  ).join('');
+
+  byId('employees').innerHTML =
+    '<section class="panel glass"><div class="panel-head"><h2>ข้อมูลพนักงาน</h2><span class="tag">' + employees.length + ' คน</span></div>' +
+    '<div class="table-wrap"><table class="data-table"><thead><tr><th>พนักงาน</th><th>เริ่มงาน</th><th>มาสาย</th><th>ลาป่วยคงเหลือ</th><th>ลากิจคงเหลือ</th><th>พักร้อนคงเหลือ</th><th></th></tr></thead>' +
+    '<tbody>' + (rows || '<tr><td colspan="7" class="empty">ไม่พบพนักงานตามตัวกรอง</td></tr>') + '</tbody></table></div></section>';
+}
+
+function renderRecords() {
+  const records = data.records || [];
+  const typeNames = { sick: 'ลาป่วย', personal: 'ลากิจ', vacation: 'พักร้อน', other: 'ลาอื่น ๆ' };
+  const rows = records.map(record => {
+    const isAttendance = record.kind === 'attendance';
+    const type = isAttendance ? '<span class="pill">มาสาย</span>' : '<span class="pill leave">' + (typeNames[record.type] || 'วันลา') + '</span>';
+    const detail = isAttendance
+      ? numberText(record.lateMinutes) + ' นาที'
+      : numberText(record.days) + ' วัน' + (record.note ? '<br><small>' + esc(record.note) + '</small>' : '');
+    return '<tr>' +
+      '<td>' + (isAttendance ? formatMonth(record.date) : formatDate(record.date)) + '</td>' +
+      '<td class="person">' + esc(record.employeeName) + '</td>' +
+      '<td>' + type + '</td>' +
+      '<td>' + detail + '</td>' +
+      '<td><div class="actions">' +
+        '<button class="icon-btn" type="button" title="แก้ไข" aria-label="แก้ไขรายการ" onclick="editRecord(\'' + js(record.kind) + '\',\'' + js(record.id) + '\')"><i data-lucide="pencil"></i></button>' +
+        '<button class="icon-btn delete" type="button" title="ลบ" aria-label="ลบรายการ" onclick="removeRecord(\'' + js(record.kind) + '\',\'' + js(record.id) + '\')"><i data-lucide="trash-2"></i></button>' +
+      '</div></td>' +
+    '</tr>';
+  }).join('');
+
+  byId('records').innerHTML =
+    '<section class="panel glass"><div class="panel-head"><h2>รายการในช่วงที่เลือก</h2><button class="btn primary" type="button" onclick="openModal(\'recordModal\')"><i data-lucide="clipboard-plus"></i>เพิ่มรายการ</button></div>' +
+    '<div class="table-wrap"><table class="data-table"><thead><tr><th>วันที่ / เดือน</th><th>พนักงาน</th><th>ประเภท</th><th>รายละเอียด</th><th></th></tr></thead>' +
+    '<tbody>' + (rows || '<tr><td colspan="5" class="empty">ยังไม่มีรายการในช่วงเวลานี้</td></tr>') + '</tbody></table></div></section>';
+}
+
+function renderAI() {
+  const configured = Boolean(data.aiConfigured);
+  const result = aiInsight
+    ? '<div class="ai-result">' + esc(aiInsight.text) + '</div><p class="ai-note">วิเคราะห์ด้วย ' + esc(aiInsight.model) + ' เมื่อ ' + new Date(aiInsight.generatedAt).toLocaleString('th-TH') + '</p>'
+    : '<div class="ai-result">กด “วิเคราะห์ด้วย AI” เพื่อให้ Gemini สรุปแนวโน้มจากข้อมูลตามช่วงเวลาและพนักงานที่เลือก</div>';
+  const setupNote = configured
+    ? 'ระบบจะส่งเฉพาะข้อมูลสรุปในมุมมองปัจจุบันไปยัง Gemini เพื่อวิเคราะห์'
+    : 'ผู้ดูแลต้องเพิ่ม GEMINI_API_KEY ใน Script Properties ก่อนใช้งานครั้งแรก';
+
+  byId('ai').innerHTML =
+    '<section class="ai-card">' +
+      '<div class="ai-head"><div><p class="eyebrow">AI PERFORMANCE INSIGHT</p><h2>วิเคราะห์ข้อมูลด้วย Gemini</h2></div><span class="ai-status">' + (configured ? 'พร้อมใช้งาน' : 'รอตั้งค่า API') + '</span></div>' +
+      '<p>วิเคราะห์ข้อมูลจริงตาม ' + esc(periodText()) + ' และตัวกรองพนักงาน โดยเน้นข้อสังเกตที่เป็นธรรมและแนวทางที่นำไปใช้ได้</p>' +
+      '<div class="ai-controls"><textarea id="aiQuestion" aria-label="คำถามเพิ่มเติม" placeholder="คำถามเพิ่มเติม เช่น ใครควรได้รับการติดตามเรื่องเวลาสาย และควรวางแผนอย่างไร"></textarea>' +
+      '<button id="aiButton" class="btn outline" type="button" onclick="runAI()" ' + (configured ? '' : 'disabled') + '><i data-lucide="sparkles"></i>วิเคราะห์ด้วย AI</button></div>' +
+      '<p class="ai-note">' + setupNote + '</p>' + result +
+    '</section>';
+}
+
+function editEmployee(id) {
+  const employee = (data.employeeOptions || []).find(item => item.id === id);
+  if (!employee) return toast('ไม่พบข้อมูลพนักงาน');
+  byId('editModalTitle').textContent = 'แก้ไขข้อมูลพนักงาน';
+  byId('editForm').onsubmit = updateEmployeeFromEdit;
+  byId('editForm').innerHTML =
+    '<input type="hidden" name="id" value="' + attr(employee.id) + '">' +
+    '<label>ชื่อ-นามสกุล<input name="name" required value="' + attr(employee.name) + '"></label>' +
+    '<label>วันที่เริ่มงาน<input name="startDate" type="date" required value="' + attr(employee.startDate) + '"></label>' +
+    '<button class="btn primary" type="submit"><i data-lucide="save"></i>บันทึกการแก้ไข</button>';
+  openModal('editModal');
+}
+
+function editRecord(kind, id) {
+  const record = (data.records || []).find(item => item.kind === kind && item.id === id);
+  if (!record) return toast('ไม่พบรายการ');
+  const employeeSelect = employeeOptionsHtml(record.employeeId);
+  byId('editForm').onsubmit = kind === 'attendance' ? updateAttendanceFromEdit : updateLeaveFromEdit;
+  if (kind === 'attendance') {
+    byId('editModalTitle').textContent = 'แก้ไขยอดรวมเวลาสายรายเดือน';
+    byId('editForm').innerHTML =
+      '<input type="hidden" name="id" value="' + attr(record.id) + '">' +
+      '<label>พนักงาน<select name="employeeId" required>' + employeeSelect + '</select></label>' +
+      '<label>เดือน<input name="month" type="month" required value="' + attr(String(record.date).slice(0, 7)) + '"></label>' +
+      '<label>เวลาสายรวมทั้งเดือน (นาที)<input name="lateMinutes" type="number" min="0" step="1" required value="' + numberText(record.lateMinutes) + '"></label>' +
+      '<button class="btn primary" type="submit"><i data-lucide="save"></i>บันทึกการแก้ไข</button>';
+  } else {
+    byId('editModalTitle').textContent = 'แก้ไขวันลา';
+    byId('editForm').innerHTML =
+      '<input type="hidden" name="id" value="' + attr(record.id) + '">' +
+      '<label>พนักงาน<select name="employeeId" required>' + employeeSelect + '</select></label>' +
+      '<label>วันที่<input name="date" type="date" required value="' + attr(record.date) + '"></label>' +
+      '<label>ประเภทการลา<select name="type" required>' +
+        leaveOption('sick', 'ลาป่วย', record.type) + leaveOption('personal', 'ลากิจ', record.type) +
+        leaveOption('vacation', 'พักร้อน', record.type) + leaveOption('other', 'ลาอื่น ๆ', record.type) +
+      '</select></label>' +
+      '<label>จำนวนวัน<input name="days" type="number" min="0.5" step="0.5" required value="' + numberText(record.days) + '"></label>' +
+      '<label>หมายเหตุ<textarea name="note" rows="2">' + esc(record.note || '') + '</textarea></label>' +
+      '<button class="btn primary" type="submit"><i data-lucide="save"></i>บันทึกการแก้ไข</button>';
+  }
+  openModal('editModal');
+}
+
+function saveEmployee(event) {
+  event.preventDefault();
+  submit('saveEmployee', formPayload(event.target), event.target, 'บันทึกพนักงานเรียบร้อย');
+}
+function saveAttendance(event) {
+  event.preventDefault();
+  submit('saveAttendance', formPayload(event.target), event.target, 'บันทึกยอดรวมเวลาสายรายเดือนเรียบร้อย');
+}
+function saveLeave(event) {
+  event.preventDefault();
+  submit('saveLeave', formPayload(event.target), event.target, 'บันทึกวันลาเรียบร้อย');
+}
+function updateEmployeeFromEdit(event) {
+  event.preventDefault();
+  submit('saveEmployee', formPayload(event.target), null, 'แก้ไขพนักงานเรียบร้อย', 'editModal');
+}
+function updateAttendanceFromEdit(event) {
+  event.preventDefault();
+  submit('saveAttendance', formPayload(event.target), null, 'แก้ไขยอดรวมเวลาสายรายเดือนเรียบร้อย', 'editModal');
+}
+function updateLeaveFromEdit(event) {
+  event.preventDefault();
+  submit('saveLeave', formPayload(event.target), null, 'แก้ไขวันลาเรียบร้อย', 'editModal');
+}
+
+function removeEmployee(id) {
+  const employee = (data.employeeOptions || []).find(item => item.id === id);
+  if (!employee) return;
+  if (!confirm('ลบ ' + employee.name + ' พร้อมรายการเวลาสายและวันลาทั้งหมดใช่หรือไม่?')) return;
+  callMutation('deleteEmployee', { employeeId: id, filters: getFilters() }, 'ลบพนักงานและรายการที่เกี่ยวข้องแล้ว');
+}
+
+function removeRecord(kind, id) {
+  if (!confirm('ลบรายการนี้ใช่หรือไม่?')) return;
+  callMutation('deleteRecord', { kind, id, filters: getFilters() }, 'ลบรายการเรียบร้อย');
+}
+
+function submit(functionName, payload, form, message, modalId) {
+  payload.filters = getFilters();
+  callMutation(functionName, payload, message, () => {
+    if (form) {
+      form.reset();
+      form.querySelectorAll('input[name="date"]').forEach(input => input.value = localDate(new Date()));
+      form.querySelectorAll('input[name="month"]').forEach(input => input.value = localMonth(new Date()));
+    }
+    closeModal(modalId || 'recordModal');
+  });
+}
+
+function callMutation(functionName, payload, message, afterSuccess) {
+  if (!hasServer()) return toast('การบันทึกใช้ได้เมื่อเปิดผ่าน Google Apps Script');
+  setLoading(true);
+  google.script.run
+    .withSuccessHandler(result => {
+      data = result;
+      aiInsight = null;
+      syncFilters();
+      render();
+      setLoading(false);
+      if (afterSuccess) afterSuccess();
+      toast(message);
+    })
+    .withFailureHandler(error => {
+      setLoading(false);
+      toast(errorMessage(error));
+    })[functionName](payload);
+}
+
+function runAI() {
+  if (!data.aiConfigured) return toast('กรุณาตั้งค่า GEMINI_API_KEY ก่อน');
+  const question = byId('aiQuestion').value.trim();
+  setLoading(true);
+  byId('aiButton').disabled = true;
+  google.script.run
+    .withSuccessHandler(result => {
+      aiInsight = result;
+      setLoading(false);
+      renderAI();
+      icons();
+      toast('AI วิเคราะห์ข้อมูลเรียบร้อย');
+    })
+    .withFailureHandler(error => {
+      setLoading(false);
+      byId('aiButton').disabled = false;
+      toast(errorMessage(error));
+    })
+    .generateAIInsight({ filters: getFilters(), question });
+}
+
+function fillEmployees() {
+  document.querySelectorAll('.employee-select').forEach(select => {
+    const selected = select.value;
+    select.innerHTML = '<option value="">เลือกพนักงาน</option>' + employeeOptionsHtml(selected);
+    select.value = selected;
+  });
+}
+
+function employeeOptionsHtml(selected) {
+  return (data.employeeOptions || []).map(emp =>
+    '<option value="' + attr(emp.id) + '"' + (emp.id === selected ? ' selected' : '') + '>' + esc(emp.name) + '</option>'
+  ).join('');
+}
+
+function leaveOption(value, label, selected) {
+  return '<option value="' + value + '"' + (value === selected ? ' selected' : '') + '>' + label + '</option>';
+}
+
+function openModal(id) {
+  fillEmployees();
+  byId(id).classList.add('open');
+  document.body.style.overflow = 'hidden';
+  icons();
+  const first = byId(id).querySelector('input:not([type="hidden"]),select,textarea,button');
+  if (first) setTimeout(() => first.focus(), 30);
+}
+
+function closeModal(id) {
+  byId(id).classList.remove('open');
+  if (!document.querySelector('.modal.open')) document.body.style.overflow = '';
+}
+
+function switchForm(button) {
+  button.closest('.modal-card').querySelectorAll('.tab,.form').forEach(element => element.classList.remove('active'));
+  button.classList.add('active');
+  byId(button.dataset.form).classList.add('active');
+}
+
+function showView(id, button) {
+  activeView = id;
+  document.querySelectorAll('.view,.nav').forEach(element => element.classList.remove('active'));
+  byId(id).classList.add('active');
+  (button || document.querySelector('[data-view="' + id + '"]')).classList.add('active');
+  const titles = { dashboard: 'ภาพรวมการทำงาน', employees: 'ข้อมูลพนักงาน', records: 'บันทึกข้อมูล', ai: 'AI Insight' };
+  byId('pageTitle').textContent = titles[id];
+  icons();
+}
+
+function exportCsv() {
+  const rows = [
+    ['พนักงาน','วันที่เริ่มงาน','มาสาย (นาที)','ลาป่วยคงเหลือ','ลากิจคงเหลือ','พักร้อนคงเหลือ'],
+    ...(data.employees || []).map(emp => [emp.name, emp.startDate, emp.lateMinutes, emp.remaining.sick, emp.remaining.personal, emp.remaining.vacation])
+  ];
+  const csv = '\ufeff' + rows.map(row => row.map(csvCell).join(',')).join('\r\n');
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  link.download = 'workday-insight-' + getFilters().startDate + '-to-' + getFilters().endDate + '.csv';
+  link.click();
+  URL.revokeObjectURL(link.href);
+  toast('ส่งออกไฟล์สรุปเรียบร้อย');
+}
+
+function periodText() {
+  const filters = data.filters || getFilters();
+  return formatDate(filters.startDate) + ' – ' + formatDate(filters.endDate);
+}
+
+function formPayload(form) {
+  return Object.fromEntries(new FormData(form).entries());
+}
+
+function setLoading(show) {
+  byId('loading').classList.toggle('show', Boolean(show));
+  byId('loading').setAttribute('aria-hidden', show ? 'false' : 'true');
+}
+
+function toast(message) {
+  const element = byId('toast');
+  element.textContent = message;
+  element.classList.add('show');
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => element.classList.remove('show'), 3500);
+}
+
+function hasServer() {
+  return typeof google !== 'undefined' && google.script && google.script.run;
+}
+function icons() {
+  if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+function errorMessage(error) {
+  return error && error.message ? error.message : 'เกิดข้อผิดพลาด กรุณาลองใหม่';
+}
+function localDate(date) {
+  const offset = date.getTimezoneOffset();
+  return new Date(date.getTime() - offset * 60000).toISOString().slice(0,10);
+}
+function localMonth(date) {
+  return localDate(date).slice(0, 7);
+}
+function formatDate(value) {
+  if (!value) return '-';
+  const parts = String(value).slice(0,10).split('-').map(Number);
+  return new Intl.DateTimeFormat('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(parts[0], parts[1] - 1, parts[2]));
+}
+function formatMonth(value) {
+  if (!value) return '-';
+  const parts = String(value).slice(0, 7).split('-').map(Number);
+  return new Intl.DateTimeFormat('th-TH', { month: 'long', year: 'numeric' }).format(new Date(parts[0], parts[1] - 1, 1));
+}
+function numberText(value) {
+  return Number(value || 0).toLocaleString('th-TH', { maximumFractionDigits: 1 });
+}
+function esc(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g, char => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[char]));
+}
+function attr(value) { return esc(value); }
+function js(value) { return String(value).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
+function csvCell(value) { return '"' + String(value == null ? '' : value).replace(/"/g,'""') + '"'; }
+
+function sample(filters) {
+  const options = [
+    { id: 'E001', name: 'กัญญารัตน์ รุ่งเรือง', startDate: '2021-02-15' },
+    { id: 'E002', name: 'ณัฐพล ใจดี', startDate: '2024-06-01' },
+    { id: 'E003', name: 'พิมพ์ชนก วัฒนกุล', startDate: '2018-04-10' }
+  ];
+  const employees = [
+    { ...options[0], lateMinutes: 18, used: { sick: 2, personal: 1, vacation: 3, other: 0 }, remaining: { sick: 28, personal: 4, vacation: 5 }, vacationEntitlement: 8 },
+    { ...options[1], lateMinutes: 72, used: { sick: 0, personal: 2, vacation: 0, other: 1 }, remaining: { sick: 30, personal: 3, vacation: 0 }, vacationEntitlement: 0 },
+    { ...options[2], lateMinutes: 35, used: { sick: 4, personal: 0, vacation: 6, other: 0 }, remaining: { sick: 26, personal: 5, vacation: 4 }, vacationEntitlement: 10 }
+  ].filter(emp => !filters.employeeId || emp.id === filters.employeeId);
+  return {
+    filters,
+    employeeOptions: options,
+    employees,
+    records: [
+      { id: 'R1', kind: 'attendance', date: filters.endDate.slice(0, 7) + '-01', employeeId: 'E002', employeeName: 'ณัฐพล ใจดี', lateMinutes: 15 },
+      { id: 'R2', kind: 'leave', date: filters.endDate, employeeId: 'E001', employeeName: 'กัญญารัตน์ รุ่งเรือง', type: 'vacation', days: 1, note: 'ธุระส่วนตัว' }
+    ],
+    summary: {
+      total: employees.length,
+      lateMinutes: employees.reduce((sum, emp) => sum + emp.lateMinutes, 0),
+      leaveDays: employees.reduce((sum, emp) => sum + Object.values(emp.used).reduce((a,b) => a+b, 0), 0),
+      atRisk: employees.filter(emp => emp.lateMinutes >= 60).length
+    },
+    aiConfigured: false
+  };
+}
+</script>
