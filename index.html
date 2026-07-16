@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#5b5ce2">
+  <meta name="description" content="Workday Insight — ระบบสรุปเวลาสายและวันลา">
+  <title>Workday Insight</title>
+  <style>
+    :root{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#17233d;background:#eef7ff}
+    *{box-sizing:border-box}
+    html,body{width:100%;height:100%;margin:0;overflow:hidden}
+    body{background:linear-gradient(125deg,#e5ffff,#ffffe6 48%,#ffe6ff)}
+    .shell{width:100%;height:100%;display:grid;grid-template-rows:44px 1fr}
+    .bar{display:flex;align-items:center;gap:10px;padding:0 14px;background:rgba(255,255,255,.78);border-bottom:1px solid rgba(91,92,226,.12);backdrop-filter:blur(16px)}
+    .mark{width:27px;height:27px;display:grid;place-items:center;border-radius:9px;background:linear-gradient(135deg,#6366e9,#aa65df);color:#fff;font-weight:800}
+    .title{font-size:14px;font-weight:700}
+    .status{margin-left:auto;display:flex;align-items:center;gap:7px;color:#5b6780;font-size:12px}
+    .dot{width:8px;height:8px;border-radius:50%;background:#f1a33c;box-shadow:0 0 0 4px rgba(241,163,60,.13)}
+    .dot.ready{background:#2da56f;box-shadow:0 0 0 4px rgba(45,165,111,.13)}
+    .open{color:#5153c8;text-decoration:none;font-size:12px;font-weight:700;margin-left:8px}
+    .open:hover{text-decoration:underline}
+    .stage{position:relative;min-height:0}
+    .frame{display:block;width:100%;height:100%;border:0;background:transparent;opacity:0;transition:opacity .2s}
+    .frame.ready{opacity:1}
+    .loading,.error{position:absolute;inset:0;display:grid;place-items:center;padding:24px;text-align:center}
+    .loading-card,.error-card{max-width:460px;padding:24px;border:1px solid rgba(255,255,255,.8);border-radius:22px;background:rgba(255,255,255,.72);box-shadow:0 18px 50px rgba(58,75,120,.11);backdrop-filter:blur(18px)}
+    .spinner{width:38px;height:38px;margin:0 auto 14px;border:4px solid rgba(91,92,226,.16);border-top-color:#5b5ce2;border-radius:50%;animation:spin .8s linear infinite}
+    .error{display:none}
+    .error h1{font-size:20px;margin:0 0 8px}
+    .error p{margin:0;color:#66758d;line-height:1.65}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    @media(max-width:620px){.shell{grid-template-rows:38px 1fr}.bar{padding:0 9px}.status span,.open{display:none}.title{font-size:13px}}
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="bar">
+      <span class="mark">W</span>
+      <span class="title">Workday Insight</span>
+      <span class="status"><span id="statusDot" class="dot"></span><span id="statusText">กำลังเชื่อมต่อ</span></span>
+      <a id="openDirect" class="open" href="#" target="_blank" rel="noopener">เปิดโดยตรง</a>
+    </header>
+    <section class="stage">
+      <div id="loading" class="loading" aria-live="polite">
+        <div class="loading-card"><div class="spinner"></div><strong>กำลังเปิด Workday Insight</strong></div>
+      </div>
+      <div id="error" class="error">
+        <div class="error-card">
+          <h1>ยังไม่ได้ตั้งค่า Web App URL</h1>
+          <p>เปิดไฟล์ <strong>docs/config.js</strong> แล้วใส่ URL จาก Google Apps Script ที่ลงท้ายด้วย <strong>/exec</strong></p>
+        </div>
+      </div>
+      <iframe id="appFrame" class="frame" title="Workday Insight Dashboard" allow="clipboard-write"></iframe>
+    </section>
+  </main>
+  <script src="./config.js"></script>
+  <script>
+    (() => {
+      const url = window.WORKDAY_CONFIG && window.WORKDAY_CONFIG.appUrl;
+      const validUrl = /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec(?:[?#].*)?$/.test(url || '');
+      const frame = document.getElementById('appFrame');
+      const loading = document.getElementById('loading');
+      const error = document.getElementById('error');
+      const statusText = document.getElementById('statusText');
+      const statusDot = document.getElementById('statusDot');
+      const direct = document.getElementById('openDirect');
+
+      if (!validUrl) {
+        loading.style.display = 'none';
+        error.style.display = 'grid';
+        statusText.textContent = 'รอตั้งค่า';
+        return;
+      }
+
+      direct.href = url;
+      frame.addEventListener('load', () => {
+        loading.style.display = 'none';
+        frame.classList.add('ready');
+        statusDot.classList.add('ready');
+        statusText.textContent = 'เชื่อมต่อแล้ว';
+      }, { once: true });
+      frame.src = url;
+    })();
+  </script>
+</body>
+</html>
