@@ -70,7 +70,20 @@ function getDashboardData(filters) {
   const selectedEmployees = employeeOptions.filter(emp => !normalized.employeeId || emp.id === normalized.employeeId);
   const employees = selectedEmployees.map(emp => calculateEmployee_(emp, filteredAttendance, filteredLeaves, normalized, leaves));
   const nameMap = employeeOptions.reduce((map, emp) => (map[emp.id] = emp.name, map), {});
-  const records = filteredAttendance.map(record => ({ ...record, kind: 'attendance', employeeName: nameMap[record.employeeId] || record.employeeId }))
+  const monthlyLateMap = filteredAttendance.reduce((map, record) => {
+    const key = record.employeeId + '|' + record.date.slice(0, 7);
+    map[key] = (map[key] || 0) + record.lateMinutes;
+    return map;
+  }, {});
+  const records = filteredAttendance.map(record => {
+    const key = record.employeeId + '|' + record.date.slice(0, 7);
+    return {
+      ...record,
+      kind: 'attendance',
+      employeeName: nameMap[record.employeeId] || record.employeeId,
+      score: lateScore_(monthlyLateMap[key])
+    };
+  })
     .concat(filteredLeaves.map(record => ({ ...record, kind: 'leave', employeeName: nameMap[record.employeeId] || record.employeeId })))
     .sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
 
@@ -79,8 +92,7 @@ function getDashboardData(filters) {
     employeeOptions,
     employees,
     records,
-    summary: summarize_(employees),
-    aiConfigured: Boolean(PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY'))
+    summary: summarize_(employees)
   };
 }
 
@@ -164,52 +176,6 @@ function deleteRecord(data) {
     sheet.deleteRow(row);
     return getDashboardData(data.filters);
   });
-}
-
-function generateAIInsight(request) {
-  const apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
-  if (!apiKey) throw new Error('ยังไม่ได้ตั้งค่า GEMINI_API_KEY ใน Script Properties');
-  const dashboard = getDashboardData(request && request.filters);
-  const compactData = {
-    period: dashboard.filters.startDate + ' ถึง ' + dashboard.filters.endDate,
-    summary: dashboard.summary,
-    employees: dashboard.employees.map(emp => ({
-      name: emp.name,
-      lateMinutes: emp.lateMinutes,
-      leaveUsed: emp.used,
-      leaveRemaining: emp.remaining
-    }))
-  };
-  const question = String(request && request.question || '').trim();
-  const prompt = [
-    'คุณเป็นผู้ช่วย HR ที่วิเคราะห์ข้อมูลอย่างเป็นธรรม ใช้เฉพาะข้อมูลที่ให้ ห้ามวินิจฉัยสุขภาพหรือคาดเดาเหตุผลส่วนตัว',
-    'ตอบภาษาไทยแบบกระชับ โดยแบ่งเป็น 1) ภาพรวม 2) จุดที่ควรติดตาม 3) ข้อเสนอแนะที่ทำได้จริง',
-    'หากข้อมูลไม่พอให้ระบุอย่างตรงไปตรงมา และหลีกเลี่ยงการตัดสินคุณค่าของพนักงาน',
-    question ? 'คำถามเพิ่มเติมจากผู้ใช้: ' + question : '',
-    'ข้อมูล: ' + JSON.stringify(compactData)
-  ].filter(Boolean).join('\n');
-
-  const response = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent', {
-    method: 'post',
-    contentType: 'application/json',
-    headers: { 'x-goog-api-key': apiKey },
-    payload: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.2, maxOutputTokens: 1200 }
-    }),
-    muteHttpExceptions: true
-  });
-  const status = response.getResponseCode();
-  const body = JSON.parse(response.getContentText() || '{}');
-  if (status < 200 || status >= 300) {
-    const message = body.error && body.error.message ? body.error.message : 'Gemini API ตอบกลับด้วยสถานะ ' + status;
-    throw new Error(message);
-  }
-  const text = body.candidates && body.candidates[0] && body.candidates[0].content && body.candidates[0].content.parts
-    ? body.candidates[0].content.parts.map(part => part.text || '').join('\n').trim()
-    : '';
-  if (!text) throw new Error('AI ไม่ได้ส่งคำตอบกลับมา กรุณาลองใหม่');
-  return { text, model: 'gemini-2.5-flash', generatedAt: new Date().toISOString() };
 }
 
 function validateRecord_(data) {
@@ -307,7 +273,16 @@ function normalizeFilters_(filters) {
 }
 
 function calculateEmployee_(emp, attendance, leaves, filters, allLeaves) {
-  const lateMinutes = attendance.filter(row => row.employeeId === emp.id).reduce((sum, row) => sum + row.lateMinutes, 0);
+  const monthlyAttendance = monthsInRange_(filters.startDate, filters.endDate).map(month => {
+    const lateMinutes = attendance
+      .filter(row => row.employeeId === emp.id && row.date.slice(0, 7) === month)
+      .reduce((sum, row) => sum + row.lateMinutes, 0);
+    return { month, lateMinutes, score: lateScore_(lateMinutes) };
+  });
+  const lateMinutes = monthlyAttendance.reduce((sum, month) => sum + month.lateMinutes, 0);
+  const attendanceScore = monthlyAttendance.length
+    ? Math.round(monthlyAttendance.reduce((sum, month) => sum + month.score, 0) / monthlyAttendance.length * 10) / 10
+    : 100;
   const used = { sick: 0, personal: 0, vacation: 0, other: 0 };
   leaves.filter(row => row.employeeId === emp.id).forEach(row => {
     if (row.type in used) used[row.type] += row.days;
@@ -321,6 +296,8 @@ function calculateEmployee_(emp, attendance, leaves, filters, allLeaves) {
   return {
     ...emp,
     lateMinutes,
+    attendanceScore,
+    monthlyAttendance,
     used,
     remaining: {
       sick: Math.max(0, 30 - entitlementUsed.sick),
@@ -329,6 +306,29 @@ function calculateEmployee_(emp, attendance, leaves, filters, allLeaves) {
     },
     vacationEntitlement
   };
+}
+
+function lateScore_(lateMinutes) {
+  const minutes = Math.max(0, Number(lateMinutes) || 0);
+  if (minutes < 30) return 100;
+  if (minutes < 60) return 90;
+  if (minutes < 90) return 80;
+  if (minutes < 120) return 70;
+  return 60;
+}
+
+function monthsInRange_(startDate, endDate) {
+  const start = String(startDate).slice(0, 7).split('-').map(Number);
+  const end = String(endDate).slice(0, 7).split('-').map(Number);
+  const months = [];
+  let year = start[0];
+  let month = start[1];
+  while (year < end[0] || (year === end[0] && month <= end[1])) {
+    months.push(year + '-' + String(month).padStart(2, '0'));
+    month++;
+    if (month > 12) { month = 1; year++; }
+  }
+  return months;
 }
 
 function vacationDays_(startDate, year) {
@@ -349,7 +349,9 @@ function summarize_(employees) {
     total: employees.length,
     lateMinutes: employees.reduce((sum, emp) => sum + emp.lateMinutes, 0),
     leaveDays: employees.reduce((sum, emp) => sum + Object.values(emp.used).reduce((a, b) => a + b, 0), 0),
-    atRisk: employees.filter(emp => emp.lateMinutes >= 60).length
+    attendanceScore: employees.length
+      ? Math.round(employees.reduce((sum, emp) => sum + emp.attendanceScore, 0) / employees.length * 10) / 10
+      : 0
   };
 }
 

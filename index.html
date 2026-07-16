@@ -25,7 +25,6 @@
         <button class="nav active" data-view="dashboard"><i data-lucide="layout-dashboard"></i><span>ภาพรวม</span></button>
         <button class="nav" data-view="employees"><i data-lucide="users"></i><span>พนักงาน</span></button>
         <button class="nav" data-view="records"><i data-lucide="clipboard-list"></i><span>รายการ</span></button>
-        <button class="nav" data-view="ai"><i data-lucide="sparkles"></i><span>AI Insight</span></button>
       </nav>
       <div class="sidebar-foot"><i data-lucide="shield-check"></i><span>ข้อมูลบันทึกใน Google Sheets</span></div>
     </aside>
@@ -58,7 +57,6 @@
       <section id="dashboard" class="view active" aria-live="polite"></section>
       <section id="employees" class="view" aria-live="polite"></section>
       <section id="records" class="view" aria-live="polite"></section>
-      <section id="ai" class="view" aria-live="polite"></section>
     </main>
   </div>
 
@@ -82,7 +80,7 @@
       <form id="attendanceForm" class="form" onsubmit="saveAttendance(event)">
         <label>พนักงาน<select class="employee-select" name="employeeId" required></select></label>
         <label>เดือน<input name="month" type="month" required></label>
-        <label>เวลาสายรวมทั้งเดือน (นาที)<input name="lateMinutes" type="number" min="0" step="1" value="0" required></label>
+        <label>เวลาสายรวมทั้งเดือน (นาที)<input name="lateMinutes" type="number" min="0" step="1" value="0" required><small class="field-hint">ระบบคำนวณคะแนนให้อัตโนมัติ: 0–29 = 100, 30–59 = 90, 60–89 = 80, 90–119 = 70 และ 120 นาทีขึ้นไป = 60 คะแนน</small></label>
         <button class="btn primary" type="submit"><i data-lucide="save"></i>บันทึกยอดรวมรายเดือน</button>
       </form>
 

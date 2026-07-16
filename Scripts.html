@@ -1,6 +1,5 @@
 <script>
-let data = { employeeOptions: [], employees: [], records: [], summary: {}, filters: {}, aiConfigured: false };
-let aiInsight = null;
+let data = { employeeOptions: [], employees: [], records: [], summary: {}, filters: {} };
 let activeView = 'dashboard';
 const byId = id => document.getElementById(id);
 
@@ -59,7 +58,6 @@ function load() {
 
 function setData(result) {
   data = result || data;
-  aiInsight = null;
   syncFilters();
   render();
 }
@@ -87,7 +85,6 @@ function render() {
   renderDashboard();
   renderEmployees();
   renderRecords();
-  renderAI();
   fillEmployees();
   icons();
 }
@@ -103,7 +100,7 @@ function renderDashboard() {
     metric('users', 'พนักงานในมุมมอง', summary.total || 0, 'ตามตัวกรองที่เลือก'),
     metric('clock-3', 'เวลาสายสะสม', (summary.lateMinutes || 0) + ' นาที', periodText()),
     metric('calendar-days', 'วันลาที่ใช้', (summary.leaveDays || 0) + ' วัน', 'รวมทุกประเภทการลา'),
-    metric('triangle-alert', 'ควรติดตาม', summary.atRisk || 0, 'เวลาสายตั้งแต่ 60 นาที')
+    metric('award', 'คะแนนเวลาสายเฉลี่ย', numberText(summary.attendanceScore) + ' / 100', 'เฉลี่ยคะแนนรายเดือน')
   ].join('');
 
   const bars = employees.length
@@ -137,6 +134,7 @@ function renderEmployees() {
       '<td class="person">' + esc(emp.name) + '</td>' +
       '<td>' + formatDate(emp.startDate) + '</td>' +
       '<td><span class="pill">' + emp.lateMinutes + ' นาที</span></td>' +
+      '<td><span class="score ' + scoreClass(emp.attendanceScore) + '">' + numberText(emp.attendanceScore) + ' คะแนน</span></td>' +
       '<td>' + numberText(emp.remaining.sick) + ' วัน</td>' +
       '<td>' + numberText(emp.remaining.personal) + ' วัน</td>' +
       '<td>' + numberText(emp.remaining.vacation) + ' / ' + numberText(emp.vacationEntitlement) + ' วัน</td>' +
@@ -149,8 +147,8 @@ function renderEmployees() {
 
   byId('employees').innerHTML =
     '<section class="panel glass"><div class="panel-head"><h2>ข้อมูลพนักงาน</h2><span class="tag">' + employees.length + ' คน</span></div>' +
-    '<div class="table-wrap"><table class="data-table"><thead><tr><th>พนักงาน</th><th>เริ่มงาน</th><th>มาสาย</th><th>ลาป่วยคงเหลือ</th><th>ลากิจคงเหลือ</th><th>พักร้อนคงเหลือ</th><th></th></tr></thead>' +
-    '<tbody>' + (rows || '<tr><td colspan="7" class="empty">ไม่พบพนักงานตามตัวกรอง</td></tr>') + '</tbody></table></div></section>';
+    '<div class="table-wrap"><table class="data-table"><thead><tr><th>พนักงาน</th><th>เริ่มงาน</th><th>มาสาย</th><th>คะแนนเฉลี่ย/เดือน</th><th>ลาป่วยคงเหลือ</th><th>ลากิจคงเหลือ</th><th>พักร้อนคงเหลือ</th><th></th></tr></thead>' +
+    '<tbody>' + (rows || '<tr><td colspan="8" class="empty">ไม่พบพนักงานตามตัวกรอง</td></tr>') + '</tbody></table></div></section>';
 }
 
 function renderRecords() {
@@ -160,7 +158,7 @@ function renderRecords() {
     const isAttendance = record.kind === 'attendance';
     const type = isAttendance ? '<span class="pill">มาสาย</span>' : '<span class="pill leave">' + (typeNames[record.type] || 'วันลา') + '</span>';
     const detail = isAttendance
-      ? numberText(record.lateMinutes) + ' นาที'
+      ? numberText(record.lateMinutes) + ' นาที<br><span class="score ' + scoreClass(record.score) + '">' + numberText(record.score) + ' คะแนน</span>'
       : numberText(record.days) + ' วัน' + (record.note ? '<br><small>' + esc(record.note) + '</small>' : '');
     return '<tr>' +
       '<td>' + (isAttendance ? formatMonth(record.date) : formatDate(record.date)) + '</td>' +
@@ -178,25 +176,6 @@ function renderRecords() {
     '<section class="panel glass"><div class="panel-head"><h2>รายการในช่วงที่เลือก</h2><button class="btn primary" type="button" onclick="openModal(\'recordModal\')"><i data-lucide="clipboard-plus"></i>เพิ่มรายการ</button></div>' +
     '<div class="table-wrap"><table class="data-table"><thead><tr><th>วันที่ / เดือน</th><th>พนักงาน</th><th>ประเภท</th><th>รายละเอียด</th><th></th></tr></thead>' +
     '<tbody>' + (rows || '<tr><td colspan="5" class="empty">ยังไม่มีรายการในช่วงเวลานี้</td></tr>') + '</tbody></table></div></section>';
-}
-
-function renderAI() {
-  const configured = Boolean(data.aiConfigured);
-  const result = aiInsight
-    ? '<div class="ai-result">' + esc(aiInsight.text) + '</div><p class="ai-note">วิเคราะห์ด้วย ' + esc(aiInsight.model) + ' เมื่อ ' + new Date(aiInsight.generatedAt).toLocaleString('th-TH') + '</p>'
-    : '<div class="ai-result">กด “วิเคราะห์ด้วย AI” เพื่อให้ Gemini สรุปแนวโน้มจากข้อมูลตามช่วงเวลาและพนักงานที่เลือก</div>';
-  const setupNote = configured
-    ? 'ระบบจะส่งเฉพาะข้อมูลสรุปในมุมมองปัจจุบันไปยัง Gemini เพื่อวิเคราะห์'
-    : 'ผู้ดูแลต้องเพิ่ม GEMINI_API_KEY ใน Script Properties ก่อนใช้งานครั้งแรก';
-
-  byId('ai').innerHTML =
-    '<section class="ai-card">' +
-      '<div class="ai-head"><div><p class="eyebrow">AI PERFORMANCE INSIGHT</p><h2>วิเคราะห์ข้อมูลด้วย Gemini</h2></div><span class="ai-status">' + (configured ? 'พร้อมใช้งาน' : 'รอตั้งค่า API') + '</span></div>' +
-      '<p>วิเคราะห์ข้อมูลจริงตาม ' + esc(periodText()) + ' และตัวกรองพนักงาน โดยเน้นข้อสังเกตที่เป็นธรรมและแนวทางที่นำไปใช้ได้</p>' +
-      '<div class="ai-controls"><textarea id="aiQuestion" aria-label="คำถามเพิ่มเติม" placeholder="คำถามเพิ่มเติม เช่น ใครควรได้รับการติดตามเรื่องเวลาสาย และควรวางแผนอย่างไร"></textarea>' +
-      '<button id="aiButton" class="btn outline" type="button" onclick="runAI()" ' + (configured ? '' : 'disabled') + '><i data-lucide="sparkles"></i>วิเคราะห์ด้วย AI</button></div>' +
-      '<p class="ai-note">' + setupNote + '</p>' + result +
-    '</section>';
 }
 
 function editEmployee(id) {
@@ -223,7 +202,7 @@ function editRecord(kind, id) {
       '<input type="hidden" name="id" value="' + attr(record.id) + '">' +
       '<label>พนักงาน<select name="employeeId" required>' + employeeSelect + '</select></label>' +
       '<label>เดือน<input name="month" type="month" required value="' + attr(String(record.date).slice(0, 7)) + '"></label>' +
-      '<label>เวลาสายรวมทั้งเดือน (นาที)<input name="lateMinutes" type="number" min="0" step="1" required value="' + numberText(record.lateMinutes) + '"></label>' +
+      '<label>เวลาสายรวมทั้งเดือน (นาที)<input name="lateMinutes" type="number" min="0" step="1" required value="' + numberText(record.lateMinutes) + '"><small class="field-hint">คะแนนคำนวณอัตโนมัติตามยอดรวมของเดือนนี้</small></label>' +
       '<button class="btn primary" type="submit"><i data-lucide="save"></i>บันทึกการแก้ไข</button>';
   } else {
     byId('editModalTitle').textContent = 'แก้ไขวันลา';
@@ -297,7 +276,6 @@ function callMutation(functionName, payload, message, afterSuccess) {
   google.script.run
     .withSuccessHandler(result => {
       data = result;
-      aiInsight = null;
       syncFilters();
       render();
       setLoading(false);
@@ -308,27 +286,6 @@ function callMutation(functionName, payload, message, afterSuccess) {
       setLoading(false);
       toast(errorMessage(error));
     })[functionName](payload);
-}
-
-function runAI() {
-  if (!data.aiConfigured) return toast('กรุณาตั้งค่า GEMINI_API_KEY ก่อน');
-  const question = byId('aiQuestion').value.trim();
-  setLoading(true);
-  byId('aiButton').disabled = true;
-  google.script.run
-    .withSuccessHandler(result => {
-      aiInsight = result;
-      setLoading(false);
-      renderAI();
-      icons();
-      toast('AI วิเคราะห์ข้อมูลเรียบร้อย');
-    })
-    .withFailureHandler(error => {
-      setLoading(false);
-      byId('aiButton').disabled = false;
-      toast(errorMessage(error));
-    })
-    .generateAIInsight({ filters: getFilters(), question });
 }
 
 function fillEmployees() {
@@ -374,15 +331,15 @@ function showView(id, button) {
   document.querySelectorAll('.view,.nav').forEach(element => element.classList.remove('active'));
   byId(id).classList.add('active');
   (button || document.querySelector('[data-view="' + id + '"]')).classList.add('active');
-  const titles = { dashboard: 'ภาพรวมการทำงาน', employees: 'ข้อมูลพนักงาน', records: 'บันทึกข้อมูล', ai: 'AI Insight' };
+  const titles = { dashboard: 'ภาพรวมการทำงาน', employees: 'ข้อมูลพนักงาน', records: 'บันทึกข้อมูล' };
   byId('pageTitle').textContent = titles[id];
   icons();
 }
 
 function exportCsv() {
   const rows = [
-    ['พนักงาน','วันที่เริ่มงาน','มาสาย (นาที)','ลาป่วยคงเหลือ','ลากิจคงเหลือ','พักร้อนคงเหลือ'],
-    ...(data.employees || []).map(emp => [emp.name, emp.startDate, emp.lateMinutes, emp.remaining.sick, emp.remaining.personal, emp.remaining.vacation])
+    ['พนักงาน','วันที่เริ่มงาน','มาสาย (นาที)','คะแนนเวลาสายเฉลี่ยต่อเดือน','ลาป่วยคงเหลือ','ลากิจคงเหลือ','พักร้อนคงเหลือ'],
+    ...(data.employees || []).map(emp => [emp.name, emp.startDate, emp.lateMinutes, emp.attendanceScore, emp.remaining.sick, emp.remaining.personal, emp.remaining.vacation])
   ];
   const csv = '\ufeff' + rows.map(row => row.map(csvCell).join(',')).join('\r\n');
   const link = document.createElement('a');
@@ -444,6 +401,11 @@ function formatMonth(value) {
 function numberText(value) {
   return Number(value || 0).toLocaleString('th-TH', { maximumFractionDigits: 1 });
 }
+function scoreClass(score) {
+  if (Number(score) >= 90) return '';
+  if (Number(score) >= 80) return 'mid';
+  return 'low';
+}
 function esc(value) {
   return String(value == null ? '' : value).replace(/[&<>"']/g, char => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[char]));
 }
@@ -458,25 +420,24 @@ function sample(filters) {
     { id: 'E003', name: 'พิมพ์ชนก วัฒนกุล', startDate: '2018-04-10' }
   ];
   const employees = [
-    { ...options[0], lateMinutes: 18, used: { sick: 2, personal: 1, vacation: 3, other: 0 }, remaining: { sick: 28, personal: 4, vacation: 5 }, vacationEntitlement: 8 },
-    { ...options[1], lateMinutes: 72, used: { sick: 0, personal: 2, vacation: 0, other: 1 }, remaining: { sick: 30, personal: 3, vacation: 0 }, vacationEntitlement: 0 },
-    { ...options[2], lateMinutes: 35, used: { sick: 4, personal: 0, vacation: 6, other: 0 }, remaining: { sick: 26, personal: 5, vacation: 4 }, vacationEntitlement: 10 }
+    { ...options[0], lateMinutes: 18, attendanceScore: 100, monthlyAttendance: [{ month: filters.endDate.slice(0, 7), lateMinutes: 18, score: 100 }], used: { sick: 2, personal: 1, vacation: 3, other: 0 }, remaining: { sick: 28, personal: 4, vacation: 5 }, vacationEntitlement: 8 },
+    { ...options[1], lateMinutes: 72, attendanceScore: 80, monthlyAttendance: [{ month: filters.endDate.slice(0, 7), lateMinutes: 72, score: 80 }], used: { sick: 0, personal: 2, vacation: 0, other: 1 }, remaining: { sick: 30, personal: 3, vacation: 0 }, vacationEntitlement: 0 },
+    { ...options[2], lateMinutes: 35, attendanceScore: 90, monthlyAttendance: [{ month: filters.endDate.slice(0, 7), lateMinutes: 35, score: 90 }], used: { sick: 4, personal: 0, vacation: 6, other: 0 }, remaining: { sick: 26, personal: 5, vacation: 4 }, vacationEntitlement: 10 }
   ].filter(emp => !filters.employeeId || emp.id === filters.employeeId);
   return {
     filters,
     employeeOptions: options,
     employees,
     records: [
-      { id: 'R1', kind: 'attendance', date: filters.endDate.slice(0, 7) + '-01', employeeId: 'E002', employeeName: 'ณัฐพล ใจดี', lateMinutes: 15 },
+      { id: 'R1', kind: 'attendance', date: filters.endDate.slice(0, 7) + '-01', employeeId: 'E002', employeeName: 'ณัฐพล ใจดี', lateMinutes: 72, score: 80 },
       { id: 'R2', kind: 'leave', date: filters.endDate, employeeId: 'E001', employeeName: 'กัญญารัตน์ รุ่งเรือง', type: 'vacation', days: 1, note: 'ธุระส่วนตัว' }
     ],
     summary: {
       total: employees.length,
       lateMinutes: employees.reduce((sum, emp) => sum + emp.lateMinutes, 0),
       leaveDays: employees.reduce((sum, emp) => sum + Object.values(emp.used).reduce((a,b) => a+b, 0), 0),
-      atRisk: employees.filter(emp => emp.lateMinutes >= 60).length
-    },
-    aiConfigured: false
+      attendanceScore: employees.length ? employees.reduce((sum, emp) => sum + emp.attendanceScore, 0) / employees.length : 0
+    }
   };
 }
 </script>
