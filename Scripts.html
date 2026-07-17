@@ -1,11 +1,12 @@
 <script>
 let data = { employeeOptions: [], employees: [], records: [], summary: {}, filters: {} };
 let activeView = 'dashboard';
+let chartMetric = 'late';
 const byId = id => document.getElementById(id);
 
 document.addEventListener('DOMContentLoaded', () => {
   const now = new Date();
-  byId('startDateFilter').value = localDate(new Date(now.getFullYear(), now.getMonth(), 1));
+  byId('startDateFilter').value = localDate(new Date(now.getFullYear(), now.getMonth() - 5, 1));
   byId('endDateFilter').value = localDate(new Date(now.getFullYear(), now.getMonth() + 1, 0));
   document.querySelectorAll('input[type="date"]').forEach(input => {
     if (!input.value && input.name === 'date') input.value = localDate(now);
@@ -103,9 +104,15 @@ function renderDashboard() {
     metric('award', 'คะแนนเวลาสายเฉลี่ย', numberText(summary.attendanceScore) + ' / 100', 'เฉลี่ยคะแนนรายเดือน')
   ].join('');
 
+  const personMax = Math.max(1, ...employees.map(emp => Number(emp.lateMinutes || 0)));
+  const rankedEmployees = [...employees].sort((a, b) => Number(b.lateMinutes || 0) - Number(a.lateMinutes || 0));
   const bars = employees.length
-    ? '<div class="bar-list">' + employees.map(emp =>
-        '<div class="bar-row"><b title="' + attr(emp.name) + '">' + esc(emp.name) + '</b><div class="bar"><span style="width:' + Math.min(100, emp.lateMinutes / 120 * 100) + '%"></span></div><b>' + emp.lateMinutes + '</b></div>'
+    ? '<div class="bar-list">' + rankedEmployees.map((emp, index) =>
+        '<button class="bar-row" type="button" onclick="filterEmployee(\'' + js(emp.id) + '\')" aria-label="กรองข้อมูลของ ' + attr(emp.name) + ' เวลาสาย ' + numberText(emp.lateMinutes) + ' นาที">' +
+          '<span class="rank">' + (index + 1) + '</span><b title="' + attr(emp.name) + '">' + esc(emp.name) + '</b>' +
+          '<span class="bar"><span style="width:' + Math.max(emp.lateMinutes ? 3 : 0, Math.min(100, emp.lateMinutes / personMax * 100)) + '%"></span></span>' +
+          '<b>' + numberText(emp.lateMinutes) + '</b>' +
+        '</button>'
       ).join('') + '</div>'
     : '<p class="empty">ไม่พบข้อมูลในช่วงเวลาที่เลือก</p>';
 
@@ -121,12 +128,84 @@ function renderDashboard() {
 
   byId('dashboard').innerHTML =
     '<div class="metrics">' + metrics + '</div>' +
+    renderMonthlyChart(employees) +
     '<div class="grid">' +
-      '<section class="panel glass"><div class="panel-head"><h2>เวลาสายรายบุคคล</h2><span class="tag">นาที / ช่วงเวลา</span></div>' + bars + '</section>' +
+      '<section class="panel glass"><div class="panel-head"><div><h2>เวลาสายรายบุคคล</h2><p class="panel-subtitle">แตะชื่อเพื่อเจาะดูข้อมูลรายบุคคล</p></div><span class="tag">นาที / ช่วงเวลา</span></div>' + bars + '</section>' +
       '<section class="panel glass"><div class="panel-head"><h2>สิทธิ์ลาคงเหลือ</h2></div><div class="leave-summary">' + leaveSummary + '</div></section>' +
     '</div>';
 }
 
+function renderMonthlyChart(employees) {
+  const months = clientMonths((data.filters || {}).startDate, (data.filters || {}).endDate);
+  const monthly = months.map(month => {
+    const rows = employees.map(emp => (emp.monthlyAttendance || []).find(item => item.month === month) || { lateMinutes: 0, score: 100 });
+    return {
+      month,
+      late: rows.reduce((sum, row) => sum + Number(row.lateMinutes || 0), 0),
+      score: rows.length ? rows.reduce((sum, row) => sum + Number(row.score || 0), 0) / rows.length : 0
+    };
+  });
+  const isLate = chartMetric === 'late';
+  const values = monthly.map(item => isLate ? item.late : item.score);
+  const max = isLate ? Math.max(1, ...values) : 100;
+  const latest = values.length ? values[values.length - 1] : 0;
+  const previous = values.length > 1 ? values[values.length - 2] : null;
+  const delta = previous == null ? null : latest - previous;
+  const average = values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+  const unit = isLate ? 'นาที' : 'คะแนน';
+  const bars = monthly.map(item => {
+    const value = isLate ? item.late : item.score;
+    const height = value ? Math.max(5, Math.min(100, value / max * 100)) : 2;
+    const aria = formatMonth(item.month) + ' ' + numberText(value) + ' ' + unit;
+    return '<div class="month-column">' +
+      '<button class="chart-point ' + (isLate ? 'late' : 'score-mode') + '" type="button" aria-label="' + attr(aria) + '">' +
+        '<span class="chart-value">' + numberText(value) + '</span>' +
+        '<span class="chart-bar-shell"><span class="chart-bar" style="height:' + height + '%"></span></span>' +
+        '<span class="chart-tooltip" role="tooltip"><b>' + esc(formatMonth(item.month)) + '</b><span>' + numberText(value) + ' ' + unit + '</span></span>' +
+      '</button>' +
+      '<span class="month-label">' + esc(formatMonthShort(item.month)) + '</span>' +
+    '</div>';
+  }).join('');
+  const deltaClass = delta == null || delta === 0 ? 'neutral' : ((isLate ? delta < 0 : delta > 0) ? 'good' : 'bad');
+  const deltaText = delta == null ? 'ยังไม่มีเดือนก่อนหน้า' : (delta === 0 ? 'เท่ากับเดือนก่อน' : (delta > 0 ? '+' : '') + numberText(delta) + ' จากเดือนก่อน');
+  const rangeCount = months.length;
+
+  return '<section class="panel glass monthly-panel">' +
+    '<div class="panel-head chart-heading"><div><p class="eyebrow">MONTHLY COMPARISON</p><h2>เปรียบเทียบรายเดือน</h2><p class="panel-subtitle">แนวโน้มตามช่วงเวลาและพนักงานที่เลือก</p></div>' +
+      '<div class="chart-controls" aria-label="ตัวเลือกกราฟ">' +
+        '<div class="range-pills" aria-label="ช่วงย้อนหลัง">' + [3,6,12].map(count => '<button class="mini-pill ' + (rangeCount === count ? 'active' : '') + '" type="button" onclick="setMonthRange(' + count + ')">' + count + ' เดือน</button>').join('') + '</div>' +
+        '<div class="segmented" role="group" aria-label="ข้อมูลที่แสดง">' +
+          '<button class="' + (isLate ? 'active' : '') + '" type="button" onclick="setChartMetric(\'late\')">เวลาสาย</button>' +
+          '<button class="' + (!isLate ? 'active' : '') + '" type="button" onclick="setChartMetric(\'score\')">คะแนนเฉลี่ย</button>' +
+        '</div>' +
+      '</div></div>' +
+    '<div class="chart-summary"><div><span>เดือนล่าสุด</span><strong>' + numberText(latest) + ' <small>' + unit + '</small></strong><em class="trend ' + deltaClass + '">' + esc(deltaText) + '</em></div>' +
+      '<div><span>เฉลี่ยต่อเดือน</span><strong>' + numberText(average) + ' <small>' + unit + '</small></strong><em>' + rangeCount + ' เดือนที่เลือก</em></div></div>' +
+    '<div class="chart-scroll" tabindex="0" aria-label="กราฟเปรียบเทียบ' + (isLate ? 'เวลาสาย' : 'คะแนน') + 'รายเดือน"><div class="chart-stage">' +
+      '<div class="chart-grid-lines"><span></span><span></span><span></span><span></span></div>' +
+      '<div class="chart-columns">' + (bars || '<p class="empty">เลือกช่วงเวลาเพื่อดูกราฟรายเดือน</p>') + '</div>' +
+    '</div></div>' +
+  '</section>';
+}
+
+function setChartMetric(metric) {
+  chartMetric = metric === 'score' ? 'score' : 'late';
+  renderDashboard();
+  icons();
+}
+
+function setMonthRange(count) {
+  const now = new Date();
+  byId('startDateFilter').value = localDate(new Date(now.getFullYear(), now.getMonth() - count + 1, 1));
+  byId('endDateFilter').value = localDate(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+  load();
+}
+
+function filterEmployee(id) {
+  byId('employeeFilter').value = id;
+  load();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
 function renderEmployees() {
   const employees = data.employees || [];
   const rows = employees.map(emp =>
@@ -398,6 +477,28 @@ function formatMonth(value) {
   const parts = String(value).slice(0, 7).split('-').map(Number);
   return new Intl.DateTimeFormat('th-TH', { month: 'long', year: 'numeric' }).format(new Date(parts[0], parts[1] - 1, 1));
 }
+function formatMonthShort(value) {
+  if (!value) return '-';
+  const parts = String(value).slice(0, 7).split('-').map(Number);
+  return new Intl.DateTimeFormat('th-TH', { month: 'short' }).format(new Date(parts[0], parts[1] - 1, 1));
+}
+function clientMonths(startDate, endDate) {
+  if (!startDate || !endDate) return [];
+  const start = String(startDate).slice(0, 7).split('-').map(Number);
+  const end = String(endDate).slice(0, 7).split('-').map(Number);
+  const months = [];
+  let year = start[0];
+  let month = start[1];
+  while (year < end[0] || (year === end[0] && month <= end[1])) {
+    months.push(year + '-' + String(month).padStart(2, '0'));
+    month++;
+    if (month > 12) {
+      month = 1;
+      year++;
+    }
+  }
+  return months;
+}
 function numberText(value) {
   return Number(value || 0).toLocaleString('th-TH', { maximumFractionDigits: 1 });
 }
@@ -413,17 +514,37 @@ function attr(value) { return esc(value); }
 function js(value) { return String(value).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
 function csvCell(value) { return '"' + String(value == null ? '' : value).replace(/"/g,'""') + '"'; }
 
+function lateScoreClient(lateMinutes) {
+  const minutes = Math.max(0, Number(lateMinutes) || 0);
+  if (minutes < 30) return 100;
+  if (minutes < 60) return 90;
+  if (minutes < 90) return 80;
+  if (minutes < 120) return 70;
+  return 60;
+}
+
 function sample(filters) {
   const options = [
     { id: 'E001', name: 'กัญญารัตน์ รุ่งเรือง', startDate: '2021-02-15' },
     { id: 'E002', name: 'ณัฐพล ใจดี', startDate: '2024-06-01' },
     { id: 'E003', name: 'พิมพ์ชนก วัฒนกุล', startDate: '2018-04-10' }
   ];
-  const employees = [
-    { ...options[0], lateMinutes: 18, attendanceScore: 100, monthlyAttendance: [{ month: filters.endDate.slice(0, 7), lateMinutes: 18, score: 100 }], used: { sick: 2, personal: 1, vacation: 3, other: 0 }, remaining: { sick: 28, personal: 4, vacation: 5 }, vacationEntitlement: 8 },
-    { ...options[1], lateMinutes: 72, attendanceScore: 80, monthlyAttendance: [{ month: filters.endDate.slice(0, 7), lateMinutes: 72, score: 80 }], used: { sick: 0, personal: 2, vacation: 0, other: 1 }, remaining: { sick: 30, personal: 3, vacation: 0 }, vacationEntitlement: 0 },
-    { ...options[2], lateMinutes: 35, attendanceScore: 90, monthlyAttendance: [{ month: filters.endDate.slice(0, 7), lateMinutes: 35, score: 90 }], used: { sick: 4, personal: 0, vacation: 6, other: 0 }, remaining: { sick: 26, personal: 5, vacation: 4 }, vacationEntitlement: 10 }
-  ].filter(emp => !filters.employeeId || emp.id === filters.employeeId);
+  const monthKeys = clientMonths(filters.startDate, filters.endDate);
+  const patterns = [[12, 28, 18, 42, 9, 18, 24, 15, 34, 11, 20, 8], [48, 65, 39, 72, 58, 44, 81, 52, 68, 43, 59, 36], [22, 35, 14, 27, 41, 19, 32, 24, 38, 17, 29, 12]];
+  const leaveData = [
+    { used: { sick: 2, personal: 1, vacation: 3, other: 0 }, remaining: { sick: 28, personal: 4, vacation: 5 }, vacationEntitlement: 8 },
+    { used: { sick: 0, personal: 2, vacation: 0, other: 1 }, remaining: { sick: 30, personal: 3, vacation: 0 }, vacationEntitlement: 0 },
+    { used: { sick: 4, personal: 0, vacation: 6, other: 0 }, remaining: { sick: 26, personal: 5, vacation: 4 }, vacationEntitlement: 10 }
+  ];
+  const employees = options.map((option, employeeIndex) => {
+    const monthlyAttendance = monthKeys.map((month, monthIndex) => {
+      const lateMinutes = patterns[employeeIndex][monthIndex % patterns[employeeIndex].length];
+      return { month, lateMinutes, score: lateScoreClient(lateMinutes) };
+    });
+    const lateMinutes = monthlyAttendance.reduce((sum, item) => sum + item.lateMinutes, 0);
+    const attendanceScore = monthlyAttendance.length ? monthlyAttendance.reduce((sum, item) => sum + item.score, 0) / monthlyAttendance.length : 100;
+    return { ...option, ...leaveData[employeeIndex], lateMinutes, attendanceScore, monthlyAttendance };
+  }).filter(emp => !filters.employeeId || emp.id === filters.employeeId);
   return {
     filters,
     employeeOptions: options,
